@@ -34,8 +34,8 @@ stop_music_thread = threading.Event() # 用于通知线程停止的事件
 # --- 初始化核心模块 ---
 
 # 串口配置 (请根据实际情况修改端口号)
-ECU_SERIAL_PORT = '/dev/ttyAMA0'  # 与电控单元通信的串口
-VOICE_SERIAL_PORT = '/dev/ttyUSB0' # 与语音模块通信的串口
+ECU_SERIAL_PORT = 'COM1'  # 与电控单元通信的串口
+VOICE_SERIAL_PORT = 'COM4' # 与语音模块通信的串口
 BAUDRATE = 9600
 
 # 全局的模块实例
