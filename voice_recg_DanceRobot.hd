@@ -1,0 +1,118 @@
+#include "asr.h"
+extern "C"{ void * __dso_handle = 0 ;}
+#include "setup.h"
+#include "HardwareSerial.h"
+
+uint32_t snid;
+void ASR_CODE();
+
+//{speak:小蝶-清新女声,vol:4,speed:10,platform:haohaodada,version:V3}
+//{playid:10001,voice:语音模块加载成功}
+//{playid:10002,voice:语音模块休眠}
+
+/*描述该功能...
+*/
+void ASR_CODE(){
+  //本函数是语音识别成功钩子程序
+  //运行时间越短越好，复杂控制启动新线程运行
+  //唤醒时间设置必须在ASR_CODE中才有效
+  set_state_enter_wakeup(100000000000000);
+  switch (snid) {
+    case 1:
+    Serial.print("qianjin\r\n");
+    break;
+    case 2:
+    Serial.print("houtui\r\n");
+    break;
+    case 3:
+    Serial.print("zuoyi\r\n");
+    break;
+    case 4:
+    Serial.print("youyi\r\n");
+    break;
+    case 5:
+    Serial.print("zuojiaocheng\r\n");
+    break;
+    case 6:
+    Serial.print("youjiaocheng\r\n");
+    break;
+    case 7:
+    Serial.print("juzuoshou\r\n");
+    break;
+    case 8:
+    Serial.print("jushuangshou\r\n");
+    break;
+    case 9:
+    Serial.print("xiangzuozhuan\r\n");
+    break;
+    case 10:
+    Serial.print("xiangyouzhuan\r\n");
+    break;
+    case 11:
+    Serial.print("yuyin\r\n");
+    break;
+    case 12:
+    Serial.print("yewendun\r\n");
+    break;
+    case 13:
+    Serial.print("daoli\r\n");
+    break;
+    case 14:
+    Serial.print("xiayaotitui\r\n");
+    break;
+    case 15:
+    Serial.print("shijue\r\n");
+    break;
+    case 16:
+    Serial.print("zhanqilai\r\n");
+    break;
+   default:
+    break;
+  }
+
+}
+
+void hardware_init(){
+  //需要操作系统启动后初始化的内容
+  //音量范围1-7
+  vol_set(7);
+  vTaskDelete(NULL);
+}
+
+void setup()
+{
+  //需要操作系统启动前初始化的内容
+  //播报音下拉菜单可以选择，合成音量是指TTS生成文件的音量
+  //欢迎词指开机提示音，可以为空
+  //退出语音是指休眠时提示音，可以为空
+  //休眠后用唤醒词唤醒后才能执行命令，唤醒词最多5个。回复语可以空。ID范围为0-9999
+  //{ID:0,keyword:"唤醒词",ASR:"开始识别",ASRTO:"好的，开始识别"}
+  //{ID:1,keyword:"命令词",ASR:"前进",ASRTO:"前进"}
+  //{ID:2,keyword:"命令词",ASR:"后退",ASRTO:"后退"}
+  //{ID:3,keyword:"命令词",ASR:"左移",ASRTO:"左移"}
+  //{ID:4,keyword:"命令词",ASR:"右移",ASRTO:"右移"}
+  //{ID:5,keyword:"命令词",ASR:"左脚撑",ASRTO:"左脚撑"}
+  //{ID:6,keyword:"命令词",ASR:"右脚撑",ASRTO:"右脚撑"}
+  //{ID:7,keyword:"命令词",ASR:"举左手",ASRTO:"举左手"}
+  //{ID:8,keyword:"命令词",ASR:"举双手",ASRTO:"举双手"}
+  //{ID:9,keyword:"命令词",ASR:"向左转",ASRTO:"向左转"}
+  //{ID:10,keyword:"命令词",ASR:"向右转",ASRTO:"向右转"}
+  //{ID:11,keyword:"命令词",ASR:"语音",ASRTO:"语音"}
+  //{ID:12,keyword:"命令词",ASR:"叶问蹲",ASRTO:"叶问蹲"}
+  //{ID:13,keyword:"命令词",ASR:"倒立",ASRTO:"倒立"}
+  //{ID:14,keyword:"命令词",ASR:"下腰踢腿",ASRTO:"下腰踢腿"}
+  //{ID:15,keyword:"命令词",ASR:"视觉",ASTRO:"视觉"}
+  //{ID:16,keyword:"命令词",ASR:"站起来",ASTRO:"站起来"}
+  setPinFun(13,SECOND_FUNCTION);
+  setPinFun(14,SECOND_FUNCTION);
+  Serial.begin(9600);
+}
+
+
+
+
+
+
+
+
+/** edittype="asr_procode" */
