@@ -22,7 +22,7 @@ class VisionProcessor:
         # --- 连续帧检测所需的状态变量 ---
         self.last_action = None
         self.consecutive_frames = 0
-        self.REQUIRED_CONSECUTIVE_FRAMES = 5
+        self.REQUIRED_CONSECUTIVE_FRAMES = 3
 
         if not self.cap.isOpened():
             print("[视觉模块] 错误: 无法打开摄像头。")
