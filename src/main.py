@@ -119,10 +119,17 @@ def handle_dance_mode():
         
         # 2. 如果有结果
         if music_id:
-            # 先向语音模块发送音乐编号（一次性发送，不加\r\n、无重试、无回执）
-            send_command_fire_and_forget(voice_serial, "舞蹈->语音", f"{music_id}")
-            # 再将结果发送给ECU，确保添加 \r\n
-            send_command_with_retry(ecu_serial, "舞蹈", f"{music_id}\r\n")
+            # 特判：若识别到 'nezha'，则对语音与电控均发送 'zixuan'
+            normalized_id = str(music_id).strip().lower()
+            if normalized_id == 'nezha':
+                # 语音模块：一次性发送，不加\r\n
+                send_command_fire_and_forget(voice_serial, "舞蹈->语音", "zixuan")
+                # 电控模块：带重试，添加\r\n
+                send_command_with_retry(ecu_serial, "舞蹈", "zixuan\r\n")
+            else:
+                # 其他音乐保持原逻辑
+                send_command_fire_and_forget(voice_serial, "舞蹈->语音", f"{music_id}")
+                send_command_with_retry(ecu_serial, "舞蹈", f"{music_id}\r\n")
         else:
             print("识别结果为None，不发送指令。")
             
