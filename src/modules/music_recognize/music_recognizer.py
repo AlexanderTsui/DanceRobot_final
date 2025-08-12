@@ -63,7 +63,7 @@ def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
 def find_best_match(
     target_features: Tuple[np.ndarray, np.ndarray],
     fingerprint_db: Dict[str, List[Tuple[np.ndarray, np.ndarray]]],
-    threshold: float = 0.5
+    threshold: float = 0.3
 ) -> Optional[Tuple[str, float]]:
     """
     在分离式指纹库中寻找最佳匹配，使用几何平均合并分数。

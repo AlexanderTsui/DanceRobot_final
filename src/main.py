@@ -34,8 +34,8 @@ stop_music_thread = threading.Event() # 用于通知线程停止的事件
 # --- 初始化核心模块 ---
 
 # 串口配置 (请根据实际情况修改端口号)
-ECU_SERIAL_PORT = 'COM1'  # 与电控单元通信的串口
-VOICE_SERIAL_PORT = 'COM4' # 与语音模块通信的串口
+ECU_SERIAL_PORT = '/dev/ttyAMA0'  # 与电控单元通信的串口
+VOICE_SERIAL_PORT = '/dev/ttyUSB0' # 与语音模块通信的串口
 BAUDRATE = 9600
 
 # 全局的模块实例
@@ -100,7 +100,7 @@ def handle_vision_mode():
         command_to_send = f"{command}\r\n"
         
         # 1. 将指令发送给语音模块（一次性，不重试）
-        send_command_fire_and_forget(voice_serial, "视觉->语音", command_to_send)
+        send_command_fire_and_forget(voice_serial, "视觉->语音", command)
         
         # 2. 将指令发送给电控模块（带重试机制）
         send_command_with_retry(ecu_serial, "视觉->电控", command_to_send)
@@ -117,9 +117,11 @@ def handle_dance_mode():
         
         print(f"[主线程] 从队列中获取到音乐ID: {music_id}")
         
-        # 2. 如果有结果，则发送给ECU
+        # 2. 如果有结果
         if music_id:
-            # 修正：确保发送给ECU的指令统一添加 \r\n
+            # 先向语音模块发送音乐编号（一次性发送，不加\r\n、无重试、无回执）
+            send_command_fire_and_forget(voice_serial, "舞蹈->语音", f"{music_id}")
+            # 再将结果发送给ECU，确保添加 \r\n
             send_command_with_retry(ecu_serial, "舞蹈", f"{music_id}\r\n")
         else:
             print("识别结果为None，不发送指令。")
@@ -196,29 +198,43 @@ def process_mode_switch_command(command: str):
     elif command == '3':
         # 只有在成功切换模式后才启动后台任务
         if switch_to_mode(MODE_DANCE, "舞蹈", "wudao\r\n"):
-            # 舞蹈模式的特殊逻辑：启动后台识别线程
-            if not (music_thread and music_thread.is_alive()):
-                print("正在启动后台音乐识别线程...")
-                stop_music_thread.clear() # 重置停止信号
-                music_thread = threading.Thread(target=background_recognize_task)
-                music_thread.start()
+            # 进入舞蹈(音乐)模式后，先通知语音模块
+            send_command_fire_and_forget(voice_serial, "舞蹈->语音", "yinyue")
+            
+            # 延时1.5秒再开始识别
+            time.sleep(1.5)
+
+            # 若仍处于舞蹈模式，则启动后台识别线程
+            if current_mode == MODE_DANCE:
+                # 舞蹈模式的特殊逻辑：启动后台识别线程
+                if not (music_thread and music_thread.is_alive()):
+                    print("正在启动后台音乐识别线程...")
+                    stop_music_thread.clear() # 重置停止信号
+                    music_thread = threading.Thread(target=background_recognize_task)
+                    music_thread.start()
+                else:
+                    print("音乐识别线程已在运行中。")
             else:
-                print("音乐识别线程已在运行中。")
+                print("已切换出舞蹈模式，跳过音乐识别启动。")
 
     # 注意：这里的else分支被移除了，因为非模式切换指令在主循环中处理
 
 def run_polling_tasks():
     """
     执行所有需要主动轮询外部输入的任务。
-    这是系统的“轮询任务中心”。
+    这是系统的"轮询任务中心"。
     """
-    # 视觉模式现在也需要轮询
-    if current_mode == MODE_VISION:
-        handle_vision_mode()
-    
-    # 舞蹈模式需要持续轮询麦克风进行音乐识别
-    elif current_mode == MODE_DANCE:
-        handle_dance_mode()
+    try:
+        # 视觉模式现在也需要轮询
+        if current_mode == MODE_VISION:
+            handle_vision_mode()
+        
+        # 舞蹈模式需要持续轮询麦克风进行音乐识别
+        elif current_mode == MODE_DANCE:
+            handle_dance_mode()
+    except Exception as e:
+        print(f"轮询任务执行错误: {e}")
+        # 不切换模式，继续保持当前状态
 
 
 # --- 主函数 ---
@@ -233,25 +249,35 @@ def main():
     while True:
         try:
             # 1. 优先处理来自语音模块的指令（包括模式切换）
-            voice_data = voice_serial.readline().decode('utf-8').strip()
-            if voice_data:
-                # 检查是否为模式切换指令 (不带\r\n)
-                if voice_data in ['1', '2', '3']:
-                    print(f"收到来自[语音模块]的模式切换指令: '{voice_data}'")
-                    process_mode_switch_command(voice_data)
-                # 如果是语音模式，则作为待转发的动作指令处理 (自带\r\n)
-                elif current_mode == MODE_VOICE:
-                    print(f"收到来自[语音模块]的待转发指令: '{voice_data}'")
-                    # 直接将带有 \r\n 的指令通过重试机制发送给电控
-                    send_command_with_retry(ecu_serial, "语音->电控", voice_data + '\r\n')
-                else:
-                    print(f"在模式 {current_mode} 下收到来自[语音模块]的未知指令: '{voice_data}' (已忽略)")
+            try:
+                voice_data = voice_serial.readline().decode('utf-8').strip()
+                if voice_data:
+                    # 检查是否为模式切换指令 (不带\r\n)
+                    if voice_data in ['1', '2', '3']:
+                        print(f"收到来自[语音模块]的模式切换指令: '{voice_data}'")
+                        process_mode_switch_command(voice_data)
+                    # 如果是语音模式，则作为待转发的动作指令处理 (自带\r\n)
+                    elif current_mode == MODE_VOICE:
+                        print(f"收到来自[语音模块]的待转发指令: '{voice_data}'")
+                        # 直接将带有 \r\n 的指令通过重试机制发送给电控
+                        send_command_with_retry(ecu_serial, "语音->电控", voice_data + '\r\n')
+                    else:
+                        print(f"在模式 {current_mode} 下收到来自[语音模块]的未知指令: '{voice_data}' (已忽略)")
+            except serial.SerialException as e:
+                print(f"语音串口读取错误: {e}")
+            except UnicodeDecodeError as e:
+                print(f"语音数据解码错误: {e}")
 
             # 2. 检查来自ECU的数据 (当前仅用于日志记录，不用于模式切换)
-            ecu_data = ecu_serial.readline().decode('utf-8').strip()
-            if ecu_data:
-                # 注意：ECU的回执在send_command_with_retry中处理，这里收到的是预期外的异步消息
-                print(f"收到来自[ECU]的异步数据: '{ecu_data}' (当前配置下，该数据被忽略)")
+            try:
+                ecu_data = ecu_serial.readline().decode('utf-8').strip()
+                if ecu_data:
+                    # 注意：ECU的回执在send_command_with_retry中处理，这里收到的是预期外的异步消息
+                    print(f"收到来自[ECU]的异步数据: '{ecu_data}' (当前配置下，该数据被忽略)")
+            except serial.SerialException as e:
+                print(f"ECU串口读取错误: {e}")
+            except UnicodeDecodeError as e:
+                print(f"ECU数据解码错误: {e}")
 
             # 3. 执行轮询任务
             run_polling_tasks()
@@ -262,9 +288,33 @@ def main():
         except KeyboardInterrupt:
             print("\n程序被用户中断。")
             break
+        except serial.SerialException as e:
+            # 串口通信错误，记录日志但不退出程序
+            print(f"串口通信错误: {e}")
+            print("尝试重新连接串口...")
+            
+            # 尝试重新初始化串口连接
+            try:
+                if ecu_serial and not ecu_serial.is_open:
+                    ecu_serial.open()
+                    print("ECU串口重连成功")
+                if voice_serial and not voice_serial.is_open:
+                    voice_serial.open()
+                    print("语音串口重连成功")
+            except Exception as reconnect_error:
+                print(f"串口重连失败: {reconnect_error}")
+            
+            # 短暂延时后继续运行
+            time.sleep(1.0)
+            continue
+            
         except Exception as e:
+            # 其他未知错误，记录日志但不退出程序
             print(f"主循环发生未知错误: {e}")
-            break
+            print("程序将继续运行...")
+            # 短暂延时避免错误循环
+            time.sleep(0.5)
+            continue
 
     # --- 清理资源 ---
     print("正在清理资源...")

@@ -1,8 +1,30 @@
-# --- 音频处理与分析核心库 ---
-librosa==0.9.2    # 用于高级音频分析，如特征提取（我们的核心）
-numpy==1.23.5     # librosa的依赖，用于高性能科学计算和数组操作
-scipy==1.10.1     # librosa的依赖，提供科学计算算法
+############################################################
+# DanceRobot_final 依赖清单
+#
+# 说明：
+# - 版本已针对 Windows + Python 3.10/3.11 进行互相兼容性约束。
+# - 涉及模块：音频录制/分析、计算机视觉（OpenCV + MediaPipe）、串口通信。
+# - 若使用其他 Python 版本，请根据需要微调版本。
+############################################################
 
-# --- 音频I/O库 ---
-soundfile==0.12.1 # librosa的依赖，用于读写多种格式的音频文件
-sounddevice==0.4.6 # 用于录制麦克风音频，将在实时识别阶段使用
+# === 科学计算基础 ===
+numpy==1.26.4         # 与 mediapipe/opencv/librosa 均兼容的稳定版本
+scipy==1.10.1         # 提供 scipy.io.wavfile 写入等功能
+
+# === 音频处理与I/O ===
+librosa==0.10.2.post1 # 音频特征提取（mfcc/chroma 等），0.10系去除了对 numba 的重度依赖
+soundfile==0.12.1     # librosa 读写音频所需（基于 libsndfile 的 Python 绑定）
+sounddevice==0.4.6    # 录音（基于 PortAudio 的 Python 接口，Windows 有官方轮子）
+
+# === 计算机视觉 ===
+opencv-python==4.9.0.80 # 提供 cv2，负责摄像头采集与可视化
+mediapipe==0.10.14      # 姿态估计（Pose）；与 numpy<2 兼容
+protobuf==4.25.3        # mediapipe 依赖范围（>=3.20,<5），显式钉住以避免冲突
+
+# === 串口通信 ===
+pyserial==3.5          # 串口通信（与 ECU/语音模块交互）
+
+# 可选：若出现镜像环境差异导致安装失败，可考虑：
+# - 将 opencv-python 升级到更高小版本；
+# - 将 mediapipe 按提示调整到与你的 Python 版本匹配的发行版；
+# - 确保使用 Python 3.10/3.11（建议）。
