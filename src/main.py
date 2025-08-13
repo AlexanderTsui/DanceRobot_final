@@ -125,11 +125,11 @@ def handle_dance_mode():
                 # 语音模块：一次性发送，不加\r\n
                 send_command_fire_and_forget(voice_serial, "舞蹈->语音", "zixuan")
                 # 电控模块：带重试，添加\r\n
-                send_command_with_retry(ecu_serial, "舞蹈", "zixuan\r\n")
+                send_command_with_retry(ecu_serial, "舞蹈->电控", "zixuan\r\n")
             else:
                 # 其他音乐保持原逻辑
                 send_command_fire_and_forget(voice_serial, "舞蹈->语音", f"{music_id}")
-                send_command_with_retry(ecu_serial, "舞蹈", f"{music_id}\r\n")
+                send_command_with_retry(ecu_serial, "舞蹈->电控", f"{music_id}\r\n")
         else:
             print("识别结果为None，不发送指令。")
             
@@ -204,7 +204,7 @@ def process_mode_switch_command(command: str):
 
     elif command == '3':
         # 只有在成功切换模式后才启动后台任务
-        if switch_to_mode(MODE_DANCE, "舞蹈", "wudao\r\n"):
+        if switch_to_mode(MODE_DANCE, "舞蹈", "yinyue\r\n"):
             # 进入舞蹈(音乐)模式后，先通知语音模块
             send_command_fire_and_forget(voice_serial, "舞蹈->语音", "yinyue")
             
