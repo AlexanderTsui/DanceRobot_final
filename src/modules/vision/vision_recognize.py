@@ -122,8 +122,8 @@ class VisionProcessor:
         if not (left_leg_angle > 160 and right_leg_angle > 160): return False
 
         # 3. 手臂打开 (y坐标接近)
-        if not (abs(self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[1]) < 0.1 and \
-                abs(self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[1]) < 0.1): return False
+        if not (abs(self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[1]) < 0.25 and \
+                abs(self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[1]) < 0.25): return False
         
         # 4. 双腿分开
         shoulder_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[0])
