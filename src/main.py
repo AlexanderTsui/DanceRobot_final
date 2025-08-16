@@ -103,7 +103,14 @@ def handle_vision_mode():
         send_command_fire_and_forget(voice_serial, "视觉->语音", command)
         
         # 2. 将指令发送给电控模块（带重试机制）
-        send_command_with_retry(ecu_serial, "视觉->电控", command_to_send)
+        success = send_command_with_retry(ecu_serial, "视觉->电控", command_to_send)
+        
+        # 3. 如果发送成功，则切换回待机模式
+        if success:
+            print("指令成功发送至电控，切换回待机模式。")
+            current_mode = MODE_IDLE
+        else:
+            print("[警告] 指令发送至电控失败，将保持在视觉模式。")
 
 def handle_dance_mode():
     """
