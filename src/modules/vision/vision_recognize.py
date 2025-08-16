@@ -11,20 +11,26 @@ class VisionProcessor:
     一个封装了 MediaPipe 姿态识别和状态管理的类。
     它被设计为非阻塞的，由主循环驱动。
     """
-    def __init__(self, use_flexible_logic: bool = True):
+    def __init__(self, use_flexible_logic: bool = True, debug_mode: bool = False):
         """
         初始化处理器，打开摄像头并准备 MediaPipe。
+        
+        Args:
+            use_flexible_logic (bool): 是否使用灵活的姿态识别逻辑。
+            debug_mode (bool): 是否开启调试模式。开启后，将持续显示“大字站”的调试信息。
         """
         print("[视觉模块] 初始化 VisionProcessor...")
         self.pose = mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
         self.cap = cv2.VideoCapture(0)
         self.landmarks = None
         self.use_flexible_logic = use_flexible_logic
+        self.debug_mode = debug_mode
 
         # --- 连续帧检测所需的状态变量 ---
         self.last_action = None
         self.consecutive_frames = 0
         self.REQUIRED_CONSECUTIVE_FRAMES = 3
+        self.debug_texts = [] # 用于存储调试信息的列表
 
         if not self.cap.isOpened():
             print("[视觉模块] 错误: 无法打开摄像头。")
@@ -49,21 +55,27 @@ class VisionProcessor:
             如果没有识别到任何特定动作，则返回 None。
         """
         self.landmarks = landmarks # 将关键点保存为实例变量，方便后续函数访问
+        
+        # 如果不是调试模式，则在每次判断前清空列表
+        # 在调试模式下，由 process_one_frame 控制清理，以确保信息被正确显示
+        if not self.debug_mode:
+            self.debug_texts.clear()
 
         if self.use_flexible_logic:
             # 使用灵活的姿态检查函数 (推荐)
             pose_checks = [
                 ("biaixin", self._check_biaixin_flexible),
                 ("gongjianbu", self._check_gongjianbu_flexible),
-                ("dazizhan", self._check_dazhan_flexible),
+                ("dazizhan", self._check_dazizhan_flexible),
                 ("jushuangshou", self._check_jushuangshou_flexible),
+                ("chayao", self._check_chayao_flexible),
                 ("dunxia", self._check_dunxia)
                 # ("fuwocheng", self._check_fuwocheng_flexible),
             ]
         else:
             # 使用原始的姿态检查函数
             pose_checks = [
-                ("dazizhan", self._check_dazhan),
+                ("dazizhan", self._check_dazizhan),
                 ("gongjianbu", self._check_gongjianbu),
                 ("jushuangshou", self._check_jushuangshou),
                 ("dunxia", self._check_dunxia),
@@ -77,7 +89,7 @@ class VisionProcessor:
             
         return None
 
-    def _check_dazhan(self):
+    def _check_dazizhan(self):
         """检查“大字站”姿势。
         
         核心逻辑:
@@ -93,28 +105,103 @@ class VisionProcessor:
             mp_pose.PoseLandmark.LEFT_KNEE, mp_pose.PoseLandmark.RIGHT_KNEE,
             mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE
         ]
-        if not self._check_visibility(required): return False
+        # 在调试模式下，即使关键点不可见，也要继续执行检查以显示完整调试信息
+        visibility_ok = self._check_visibility(required)
+        if self.debug_mode:
+            self.debug_texts.append(f"dazizhan: Landmarks visible ({visibility_ok})")
+        elif not visibility_ok:
+            return False
 
-        # 1. 双臂伸直
+        # --- 为了全面调试，重构逻辑以避免提前返回 ---
+
+        # 1. 双臂伸直 (改进版本)
         left_arm_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER), self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW), self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST))
         right_arm_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER), self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW), self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST))
-        if not (left_arm_angle > 160 and right_arm_angle > 160): return False
+        
+        # 使用更严格的角度阈值，并增加额外的几何验证
+        left_arm_straight = left_arm_angle > 165  # 更严格的阈值
+        right_arm_straight = right_arm_angle > 165
+        
+        # 额外验证：检查手臂是否真的向外伸展（而不是向身体内侧弯曲）
+        left_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)
+        right_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)
+        left_wrist_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)
+        right_wrist_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)
+        
+        # 检查手臂是否向外伸展的逻辑
+        arms_extended_outward = True
+        left_extended = False
+        right_extended = False
+        
+        if all([left_shoulder_coords, right_shoulder_coords, left_wrist_coords, right_wrist_coords]):
+            # 左手腕应该在左肩膀的左侧，右手腕应该在右肩膀的右侧
+            left_extended = left_wrist_coords[0] < left_shoulder_coords[0]
+            right_extended = right_wrist_coords[0] > right_shoulder_coords[0]
+            arms_extended_outward = left_extended and right_extended
+        else:
+            arms_extended_outward = False
+        
+        arms_straight = left_arm_straight and right_arm_straight and arms_extended_outward
+        
+        if self.debug_mode: 
+            # 显示原始坐标用于调试
+            if left_shoulder_coords and self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW) and left_wrist_coords:
+                left_elbow_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW)
+                self.debug_texts.append(f"dazizhan L_coords: S({left_shoulder_coords[0]:.3f},{left_shoulder_coords[1]:.3f}) E({left_elbow_coords[0]:.3f},{left_elbow_coords[1]:.3f}) W({left_wrist_coords[0]:.3f},{left_wrist_coords[1]:.3f})")
+            
+            if right_shoulder_coords and self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW) and right_wrist_coords:
+                right_elbow_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW)
+                self.debug_texts.append(f"dazizhan R_coords: S({right_shoulder_coords[0]:.3f},{right_shoulder_coords[1]:.3f}) E({right_elbow_coords[0]:.3f},{right_elbow_coords[1]:.3f}) W({right_wrist_coords[0]:.3f},{right_wrist_coords[1]:.3f})")
+            
+            self.debug_texts.append(f"dazizhan L_angle: {left_arm_angle:.1f} (>165: {left_arm_straight})")
+            self.debug_texts.append(f"dazizhan R_angle: {right_arm_angle:.1f} (>165: {right_arm_straight})")
+            self.debug_texts.append(f"dazizhan L_extended: {left_extended}")
+            self.debug_texts.append(f"dazizhan R_extended: {right_extended}")
+            self.debug_texts.append(f"dazizhan Arms final: {arms_straight}")
 
         # 2. 双腿伸直
         left_leg_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.LEFT_HIP), self._get_coords(mp_pose.PoseLandmark.LEFT_KNEE), self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE))
         right_leg_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.RIGHT_HIP), self._get_coords(mp_pose.PoseLandmark.RIGHT_KNEE), self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE))
-        if not (left_leg_angle > 160 and right_leg_angle > 160): return False
+        legs_straight = left_leg_angle > 160 and right_leg_angle > 160
+        if self.debug_mode: 
+            self.debug_texts.append(f"dazizhan Legs straight ({legs_straight}): L={left_leg_angle:.0f}, R={right_leg_angle:.0f}")
 
         # 3. 手臂打开 (y坐标接近)
-        if not (abs(self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[1]) < 0.25 and \
-                abs(self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[1]) < 0.25): return False
+        # 安全地获取坐标，如果某个点不可见，_get_coords会返回None
+        left_wrist_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)
+        left_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)
+        right_wrist_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)
+        right_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)
         
+        arms_open = False
+        if all([left_wrist_coords, left_shoulder_coords, right_wrist_coords, right_shoulder_coords]):
+            left_y_diff = abs(left_wrist_coords[1] - left_shoulder_coords[1])
+            right_y_diff = abs(right_wrist_coords[1] - right_shoulder_coords[1])
+            arms_open = left_y_diff < 0.25 and right_y_diff < 0.25
+            if self.debug_mode: 
+                self.debug_texts.append(f"dazizhan Arms open ({arms_open}): L-Y-diff={left_y_diff:.2f}, R-Y-diff={right_y_diff:.2f}")
+        elif self.debug_mode:
+            self.debug_texts.append("dazizhan Arms open (False): Coords missing")
+
         # 4. 双腿分开
-        shoulder_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[0])
-        ankle_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE)[0])
-        if not ankle_dist > shoulder_dist * 1.2: return False
-        
-        return True
+        legs_apart = False
+        if all([left_shoulder_coords, right_shoulder_coords, self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE), self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE)]):
+            shoulder_dist = abs(left_shoulder_coords[0] - right_shoulder_coords[0])
+            ankle_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE)[0])
+            if shoulder_dist > 0:
+                legs_apart = ankle_dist > shoulder_dist * 1.2
+                if self.debug_mode: self.debug_texts.append(f"dazizhan Legs apart ({legs_apart}): AnkleD={ankle_dist:.2f}, Thr={shoulder_dist*1.2:.2f}")
+            elif self.debug_mode:
+                self.debug_texts.append("dazizhan Legs apart (False): Shoulder dist is 0")
+        elif self.debug_mode:
+            self.debug_texts.append("dazizhan Legs apart (False): Coords missing")
+
+        # 在调试模式下，即使关键点不可见，也返回完整的逻辑结果
+        # 在非调试模式下，如果关键点不可见，则前面已经返回了False
+        final_result = visibility_ok and arms_straight and legs_straight and arms_open and legs_apart
+        if self.debug_mode:
+            self.debug_texts.append(f"dazizhan Final result: {final_result}")
+        return final_result
 
     def _check_gongjianbu(self):
         """检查“弓箭步”姿势。
@@ -373,7 +460,7 @@ class VisionProcessor:
             return True
         return False
 
-    def _check_dazhan_upper_body(self):
+    def _check_dazizhan_upper_body(self):
         """检查“大字站”姿势的上半身组件。"""
         # 核心逻辑: 双臂水平伸直打开
         required = [
@@ -386,15 +473,15 @@ class VisionProcessor:
         # 1. 双臂伸直
         left_arm_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER), self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW), self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST))
         right_arm_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER), self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW), self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST))
-        if not (left_arm_angle > 140 and right_arm_angle > 140): return False
+        if not (left_arm_angle > 160 and right_arm_angle > 160): return False
 
         # 2. 手臂水平打开 (y坐标接近)
-        if not (abs(self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[1]) < 0.35 and \
-                abs(self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[1]) < 0.35): return False
+        if not (abs(self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[1]) < 0.1 and \
+                abs(self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)[1] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[1]) < 0.1): return False
         
         return True
 
-    def _check_dazhan_lower_body(self):
+    def _check_dazizhan_lower_body(self):
         """检查“大字站”姿势的下半身组件。"""
         # 核心逻辑: 双腿伸直，分开宽度大于肩宽
         required = [
@@ -417,7 +504,7 @@ class VisionProcessor:
 
         return True
 
-    def _check_dazhan_flexible(self):
+    def _check_dazizhan_flexible(self):
         """[灵活版] 检查“大字站”姿势。
         决策逻辑：上下半身特征都较强，只要可见的部分匹配，就判定成功。
         """
@@ -428,9 +515,9 @@ class VisionProcessor:
             return False
 
         # 只要可见的部分不匹配，就判定失败
-        if upper_body_visible and not self._check_dazhan_upper_body():
+        if upper_body_visible and not self._check_dazizhan_upper_body():
             return False
-        if lower_body_visible and not self._check_dazhan_lower_body():
+        if lower_body_visible and not self._check_dazizhan_lower_body():
             return False
 
         return True
@@ -594,6 +681,193 @@ class VisionProcessor:
             
         return True
 
+    def _check_chayao_flexible(self):
+        """[灵活版] 检查"叉腰"姿势。
+        决策逻辑：上半身的"叉腰"手势是决定性特征，下半身作为辅助验证。
+        """
+        if self._check_chayao_upper_body():
+            # 如果下半身可见，则检查是否为站直并拢姿态
+            lower_body_visible = self._check_visibility([mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE], mode='any')
+            if lower_body_visible and not self._check_chayao_lower_body():
+                return False
+            return True
+        return False
+
+    def _check_chayao_upper_body(self):
+        """检查"叉腰"姿势的上半身组件。"""
+        # 核心逻辑: 双手放在腰部，肘部向外张开
+        required = [
+            mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER,
+            mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.RIGHT_ELBOW,
+            mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.RIGHT_WRIST,
+            mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP
+        ]
+        if not self._check_visibility(required): return False
+
+        # 获取关键点坐标
+        left_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)
+        right_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)
+        left_elbow_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW)
+        right_elbow_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW)
+        left_wrist_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)
+        right_wrist_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)
+        left_hip_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_HIP)
+        right_hip_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_HIP)
+
+        # 计算身体中线
+        center_x = (left_hip_coords[0] + right_hip_coords[0]) / 2
+        
+        # 1. 手腕位置验证：手腕应该在腰部附近
+        hip_y_avg = (left_hip_coords[1] + right_hip_coords[1]) / 2
+        left_wrist_to_hip_y = abs(left_wrist_coords[1] - hip_y_avg)
+        right_wrist_to_hip_y = abs(right_wrist_coords[1] - hip_y_avg)
+        if not (left_wrist_to_hip_y < 0.3 and right_wrist_to_hip_y < 0.3):
+            return False
+
+        # 2. 手腕位置验证：手腕应该在身体两侧适当距离
+        left_wrist_to_center = abs(left_wrist_coords[0] - center_x)
+        right_wrist_to_center = abs(right_wrist_coords[0] - center_x)
+        if not (0 < left_wrist_to_center < 0.3 and 0 < right_wrist_to_center < 0.3):
+            return False
+
+        # 3. 肘部张开验证：两肘部之间距离大于两手腕之间距离
+        elbow_distance = abs(left_elbow_coords[0] - right_elbow_coords[0])
+        wrist_distance = abs(left_wrist_coords[0] - right_wrist_coords[0])
+        if not (elbow_distance > wrist_distance):
+            return False
+
+        # 4. 手臂角度验证：肘部应该适度弯曲（70-140度）
+        left_arm_angle = self._calculate_angle(left_shoulder_coords, left_elbow_coords, left_wrist_coords)
+        right_arm_angle = self._calculate_angle(right_shoulder_coords, right_elbow_coords, right_wrist_coords)
+        if not (70 < left_arm_angle < 140 and 70 < right_arm_angle < 140):
+            return False
+
+        return True
+
+    def _check_chayao_lower_body(self):
+        """检查"叉腰"姿势的下半身组件。"""
+        # 核心逻辑: 双腿站直并拢（与举双手的下半身检查类似）
+        required = [
+            mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER,
+            mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP,
+            mp_pose.PoseLandmark.LEFT_KNEE, mp_pose.PoseLandmark.RIGHT_KNEE,
+            mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE
+        ]
+        if not self._check_visibility(required): return False
+        
+        # 1. 双腿伸直
+        left_leg_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.LEFT_HIP), self._get_coords(mp_pose.PoseLandmark.LEFT_KNEE), self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE))
+        right_leg_angle = self._calculate_angle(self._get_coords(mp_pose.PoseLandmark.RIGHT_HIP), self._get_coords(mp_pose.PoseLandmark.RIGHT_KNEE), self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE))
+        if not (left_leg_angle > 160 and right_leg_angle > 160): return False
+
+        # 2. 双腿并拢
+        shoulder_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)[0])
+        ankle_dist = abs(self._get_coords(mp_pose.PoseLandmark.LEFT_ANKLE)[0] - self._get_coords(mp_pose.PoseLandmark.RIGHT_ANKLE)[0])
+        if not ankle_dist < shoulder_dist * 1.1: return False
+        
+        return True
+
+    def _check_chayao_with_debug(self):
+        """检查"叉腰"姿势并输出详细调试信息。
+        
+        此函数专门用于调试模式，会详细显示每个判断步骤的结果。
+        """
+        required = [
+            mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER,
+            mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.RIGHT_ELBOW,
+            mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.RIGHT_WRIST,
+            mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP
+        ]
+        
+        # 检查关键点可见性
+        visibility_ok = self._check_visibility(required)
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao: Landmarks visible ({visibility_ok})")
+        elif not visibility_ok:
+            return False
+
+        # 如果关键点不可见，在调试模式下仍继续执行以显示完整信息
+        if not visibility_ok:
+            if self.debug_mode:
+                self.debug_texts.append("chayao: Cannot proceed - landmarks not visible")
+            return False
+
+        # 获取关键点坐标
+        left_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_SHOULDER)
+        right_shoulder_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_SHOULDER)
+        left_elbow_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_ELBOW)
+        right_elbow_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_ELBOW)
+        left_wrist_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_WRIST)
+        right_wrist_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_WRIST)
+        left_hip_coords = self._get_coords(mp_pose.PoseLandmark.LEFT_HIP)
+        right_hip_coords = self._get_coords(mp_pose.PoseLandmark.RIGHT_HIP)
+
+        if self.debug_mode:
+            # 显示原始坐标用于调试
+            if left_shoulder_coords and left_elbow_coords and left_wrist_coords:
+                self.debug_texts.append(f"chayao L_coords: S({left_shoulder_coords[0]:.3f},{left_shoulder_coords[1]:.3f}) E({left_elbow_coords[0]:.3f},{left_elbow_coords[1]:.3f}) W({left_wrist_coords[0]:.3f},{left_wrist_coords[1]:.3f})")
+            
+            if right_shoulder_coords and right_elbow_coords and right_wrist_coords:
+                self.debug_texts.append(f"chayao R_coords: S({right_shoulder_coords[0]:.3f},{right_shoulder_coords[1]:.3f}) E({right_elbow_coords[0]:.3f},{right_elbow_coords[1]:.3f}) W({right_wrist_coords[0]:.3f},{right_wrist_coords[1]:.3f})")
+            
+            if left_hip_coords and right_hip_coords:
+                self.debug_texts.append(f"chayao Hip_coords: L({left_hip_coords[0]:.3f},{left_hip_coords[1]:.3f}) R({right_hip_coords[0]:.3f},{right_hip_coords[1]:.3f})")
+
+        # 计算身体中线
+        center_x = (left_hip_coords[0] + right_hip_coords[0]) / 2
+        
+        # 1. 手腕位置验证：手腕应该在腰部附近
+        hip_y_avg = (left_hip_coords[1] + right_hip_coords[1]) / 2
+        left_wrist_to_hip_y = abs(left_wrist_coords[1] - hip_y_avg)
+        right_wrist_to_hip_y = abs(right_wrist_coords[1] - hip_y_avg)
+        wrist_y_ok = left_wrist_to_hip_y < 0.3 and right_wrist_to_hip_y < 0.3        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao Wrist Y pos ({wrist_y_ok}): L_Y_diff={left_wrist_to_hip_y:.3f}, R_Y_diff={right_wrist_to_hip_y:.3f}")
+
+        # 2. 手腕位置验证：手腕应该在身体两侧适当距离
+        left_wrist_to_center = abs(left_wrist_coords[0] - center_x)
+        right_wrist_to_center = abs(right_wrist_coords[0] - center_x)
+        wrist_x_ok = (0.1 < left_wrist_to_center < 0.3 and 0.1 < right_wrist_to_center < 0.3)
+        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao Wrist X pos ({wrist_x_ok}): L_X_dist={left_wrist_to_center:.3f}, R_X_dist={right_wrist_to_center:.3f}")
+
+        # 3. 肘部张开验证：两肘部之间距离大于两手腕之间距离
+        elbow_distance = abs(left_elbow_coords[0] - right_elbow_coords[0])
+        wrist_distance = abs(left_wrist_coords[0] - right_wrist_coords[0])
+        elbow_extended_ok = elbow_distance > wrist_distance
+        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao Elbow extended ({elbow_extended_ok}): ElbowDist={elbow_distance:.3f}, WristDist={wrist_distance:.3f}")
+
+        # 4. 手臂角度验证：肘部应该适度弯曲（70-140度）
+        left_arm_angle = self._calculate_angle(left_shoulder_coords, left_elbow_coords, left_wrist_coords)
+        right_arm_angle = self._calculate_angle(right_shoulder_coords, right_elbow_coords, right_wrist_coords)
+        left_angle_ok = 70 < left_arm_angle < 140
+        right_angle_ok = 70 < right_arm_angle < 140
+        angle_ok = left_angle_ok and right_angle_ok
+        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao L_angle: {left_arm_angle:.1f} (70<angle<140: {left_angle_ok})")
+            self.debug_texts.append(f"chayao R_angle: {right_arm_angle:.1f} (70<angle<140: {right_angle_ok})")
+
+        # 5. 检查下半身（如果可见）
+        lower_body_visible = self._check_visibility([mp_pose.PoseLandmark.LEFT_ANKLE, mp_pose.PoseLandmark.RIGHT_ANKLE], mode='any')
+        lower_body_ok = True
+        if lower_body_visible:
+            lower_body_ok = self._check_chayao_lower_body()
+        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao Lower body: visible={lower_body_visible}, ok={lower_body_ok}")
+
+        # 最终结果
+        final_result = visibility_ok and wrist_y_ok and wrist_x_ok and elbow_extended_ok and angle_ok and lower_body_ok
+        
+        if self.debug_mode:
+            self.debug_texts.append(f"chayao Final result: {final_result}")
+
+        return final_result
+
     def _check_fuwocheng_flexible(self):
         """[灵活版] 检查“俯卧撑”姿势。
         决策逻辑：这是一个整体性动作，无法简单拆分。逻辑会根据可见关键点动态判断。
@@ -677,6 +951,7 @@ class VisionProcessor:
     def _calculate_angle(self, a, b, c) -> float:
         """
         计算由三点构成的角度（以b为顶点）。
+        使用二维坐标计算，忽略不准确的z坐标。
         
         Args:
             a, b, c: 每个点都是包含x, y, (可选z)坐标的元组或列表。
@@ -687,16 +962,16 @@ class VisionProcessor:
         if a is None or b is None or c is None:
             return 0.0
 
-        # 将输入转换为numpy数组以进行向量运算
-        a = np.array(a)
-        b = np.array(b)
-        c = np.array(c)
+        # 只使用x, y坐标进行二维角度计算，忽略z坐标
+        a_2d = np.array([a[0], a[1]])
+        b_2d = np.array([b[0], b[1]]) 
+        c_2d = np.array([c[0], c[1]])
 
-        # 计算从b到a和从b到c的向量
-        ba = a - b
-        bc = c - b
+        # 计算从b到a和从b到c的二维向量
+        ba = a_2d - b_2d
+        bc = c_2d - b_2d
 
-        # 计算两个向量的点积和模
+        # 计算二维向量的点积和模
         cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
         
         # 确保cosine_angle在[-1, 1]范围内，防止浮点数误差
@@ -730,6 +1005,15 @@ class VisionProcessor:
         # 核心逻辑：连续帧判断
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(image_bgr, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+            
+            # --- 调试模式逻辑 ---
+            # 如果开启调试模式，我们总是强制运行一次_check_chayao来填充调试信息列表
+            if self.debug_mode:
+                self.debug_texts.clear()
+                self.landmarks = results.pose_landmarks
+                self._check_chayao_with_debug()
+                self.landmarks = None # 恢复为空，以便_judge_pose正常工作
+
             current_action = self._judge_pose(results.pose_landmarks)
 
             # 如果识别到动作，则更新计数器
@@ -759,6 +1043,14 @@ class VisionProcessor:
         # 在画面上显示调试信息
         status_text = f"Action: {self.last_action} ({self.consecutive_frames}/{self.REQUIRED_CONSECUTIVE_FRAMES})"
         cv2.putText(image_bgr, status_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+        # 仅在调试模式下，显示详细的调试文本
+        if self.debug_mode:
+            y_pos = 60
+            for text in self.debug_texts:
+                cv2.putText(image_bgr, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                y_pos += 25
+        
         cv2.imshow('MediaPipe Pose - Dance Robot', image_bgr)
         
         # 必须有 waitKey 才能让 imshow 正常工作
@@ -795,7 +1087,8 @@ if __name__ == "__main__":
 
     processor = None
     try:
-        processor = VisionProcessor()
+        # 独立运行时，开启调试模式
+        processor = VisionProcessor(debug_mode=True)
         print("\n--- 开始持续姿态检测 (按 'q' 键或 Ctrl+C 退出) ---")
         while True:
             # process_one_frame 会自动显示画面
